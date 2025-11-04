@@ -38,16 +38,9 @@ proc sarray {file args} {
 # Builds footer info for HTML pages
 #
 # Arguments:
-# packages - List of packages to link to.
+# packages - List of packages (ignored, kept for compatibility)
 
 proc footer {packages} {
-    lappend f "<HR>"
-    set h "\["
-    foreach package $packages {
-        lappend h "<A HREF=\"../$package/contents.html\">$package</A>"
-        lappend h "|"
-    }
-    lappend f [join [lreplace $h end end {}] " "]
     lappend f "<HR>"
     lappend f "<PRE>Copyright &#169; 1989-1994 The Regents of the University of California."
     lappend f "Copyright &#169; 1994-1996 Sun Microsystems, Inc."
