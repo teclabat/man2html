@@ -239,7 +239,7 @@ proc do {fileName} {
         append man2tcl ".exe"
     }
 
-    if {[catch {eval [exec $man2tcl [glob $fileName]]} msg]} {
+    if {[catch {eval [exec $man2tcl $fileName]} msg]} {
         global errorInfo
         puts stderr $msg
         puts "in"

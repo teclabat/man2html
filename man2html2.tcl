@@ -34,6 +34,8 @@
 #
 # footer -	info inserted at bottom of each page. Normally read from the
 #		xref.tcl file
+#
+# tocSections -	List of sections for table of contents generation (enhanced version)
 
 ##############################################################################
 # initGlobals --
@@ -46,21 +48,53 @@
 
 proc initGlobals {} {
     global file noFillCount textState
-    global fontStart fontEnd curFont inPRE charCnt inTable
+    global fontStart fontEnd curFont inPRE charCnt inTable tocSections
 
     nest init
     set inPRE 0
     set inTable 0
     set textState 0
     set curFont ""
-    set fontStart(Code) "<B>"
-    set fontStart(Emphasis) "<I>"
-    set fontEnd(Code) "</B>"
-    set fontEnd(Emphasis) "</I>"
+    set fontStart(Code) "<code class=\"inline-code\">"
+    set fontStart(Emphasis) "<em>"
+    set fontEnd(Code) "</code>"
+    set fontEnd(Emphasis) "</em>"
     set noFillCount 0
     set charCnt 0
+    set tocSections {}
     setTabs 0.5i
 }
+
+
+##############################################################################
+# generateCSS --
+#
+# Reads CSS stylesheet from external file
+#
+# Arguments:
+# None.
+#
+# Returns:
+# CSS content as string
+
+proc generateCSS {} {
+    global scriptDir
+
+    # Path to CSS file
+    set cssFile [file join $scriptDir "style.css"]
+
+    # Read CSS file
+    if {[catch {open $cssFile r} f]} {
+        puts stderr "Warning: Could not open style.css, using default CSS"
+        # Fallback to minimal CSS if file not found
+        return {body { font-family: sans-serif; margin: 20px; }}
+    }
+
+    set css [read $f]
+    close $f
+    return $css
+}
+
 
 ##############################################################################
 # beginFont --
@@ -209,12 +243,12 @@ proc macro {name args} {
 	BE {}
 	CE {
 	    global file noFillCount inPRE
-	    puts $file </PRE></BLOCKQUOTE>
+	    puts $file "</code></pre>"
 	    set inPRE 0
 	}
 	CS {				;# code section
 	    global file noFillCount inPRE
-	    puts -nonewline $file <BLOCKQUOTE><PRE>
+	    puts -nonewline $file "<pre><code class=\"language-tcl\">"
 	    set inPRE 1
 	}
 	DE {
@@ -691,7 +725,7 @@ proc macro2 {name args} {
 # style -		Type of section (optional)
 
 proc SHmacro {argList {style section}} {
-    global file noFillCount textState charCnt
+    global file noFillCount textState charCnt tocSections
 
     set args [join $argList " "]
     if {[llength $argList] < 1} {
@@ -701,15 +735,26 @@ proc SHmacro {argList {style section}} {
     set noFillCount 0
     nest reset
 
-    set tag H3
-    if {$style eq "subsection"} {
-	set tag H4
+    # Create URL-safe anchor from section name
+    set anchor [string tolower $args]
+    regsub -all {[^a-z0-9]+} $anchor "-" anchor
+    set anchor [string trim $anchor "-"]
+    if {$anchor eq ""} {
+        set anchor "section"
     }
-    puts -nonewline $file "<$tag>"
+
+    # Add to TOC sections list
+    lappend tocSections [list $args $anchor]
+
+    # Output section with anchor
+    set tag h2
+    if {$style eq "subsection"} {
+	set tag h3
+    }
+    puts $file "            <section id=\"$anchor\">"
+    puts -nonewline $file "                <$tag>"
     text $args
     puts $file "</$tag>"
-
-#	? args textState
 
     # control what the text proc does with text
 
@@ -802,7 +847,7 @@ proc TPmacro {argList} {
 # argList -		List of arguments to the .TH macro.
 
 proc THmacro {argList} {
-    global file
+    global file tocSections
 
     if {[llength $argList] != 5} {
 	set args [join $argList " "]
@@ -814,13 +859,36 @@ proc THmacro {argList} {
     set lib   [lindex $argList 3]		;# Tcl
     set pname [lindex $argList 4]		;# {Tcl Library Procedures}
 
-    puts -nonewline $file "<HTML><HEAD><TITLE>"
-    text "$lib - $name ($page)"
-    puts $file "</TITLE></HEAD><BODY>\n"
+    # Initialize TOC sections list
+    set tocSections {}
 
-    puts -nonewline $file "<H1><CENTER>"
-    text $pname
-    puts $file "</CENTER></H1>\n"
+    # Generate modern HTML5 header with embedded CSS
+    puts $file "<!DOCTYPE html>"
+    puts $file "<html lang=\"en\">"
+    puts $file "<head>"
+    puts $file "    <meta charset=\"UTF-8\">"
+    puts $file "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+    puts -nonewline $file "    <title>"
+    text "${name}($page) - $lib"
+    puts $file "</title>"
+    puts $file "    <style>"
+    puts $file [generateCSS]
+    puts $file "    </style>"
+    puts $file "</head>"
+    puts $file "<body>"
+    puts $file "    <div class=\"container\">"
+    puts $file "        <header>"
+    puts -nonewline $file "            <h1>"
+    text $name
+    puts $file "</h1>"
+    puts -nonewline $file "            <p class=\"subtitle\">"
+    text "$pname - $lib"
+    puts $file "</p>"
+    puts $file "        </header>"
+    puts $file ""
+    puts $file "        <!-- TOC will be inserted here -->"
+    puts $file ""
+    puts $file "        <main>"
 }
 
 ##############################################################################
@@ -908,9 +976,10 @@ proc nest {op {listStart "NEW"} {listItem ""} } {
 # fileName -		Name of the file to translate.
 
 proc do fileName {
-    global file self html_dir package footer scriptDir
+    global file self html_dir package footer scriptDir tocSections
     set self "[file tail $fileName].html"
-    set file [open "$html_dir/$self" w]
+    set tempFile [open "$html_dir/$self.tmp" w]
+    set file $tempFile
     puts "  Pass 2 -- $fileName"
     flush stdout
     initGlobals
@@ -920,7 +989,7 @@ proc do fileName {
     if {$::tcl_platform(platform) eq "windows"} {
         append man2tcl ".exe"
     }
-    if {[catch { eval [exec $man2tcl [glob $fileName]] } msg]} {
+    if {[catch { eval [exec $man2tcl $fileName] } msg]} {
 	global errorInfo
 	puts stderr $msg
 	puts "in"
@@ -928,7 +997,49 @@ proc do fileName {
 	exit 1
     }
     nest reset
-    puts $file $footer
-    puts $file "</BODY></HTML>"
-    close $file
+
+    # Close sections and main
+    puts $file "            </section>"
+    puts $file "        </main>"
+    puts $file ""
+
+    # Generate modern footer
+    puts $file "        <footer>"
+    puts $file "            <p>Generated on [clock format [clock seconds] -format {%Y-%m-%d}] by man2html.tcl</p>"
+    puts $file "        </footer>"
+    puts $file "    </div>"
+    puts $file "</body>"
+    puts $file "</html>"
+    close $tempFile
+
+    # Now insert TOC at the right place
+    set tempFile [open "$html_dir/$self.tmp" r]
+    set content [read $tempFile]
+    close $tempFile
+
+    # Generate TOC HTML
+    set tocHtml ""
+    if {[llength $tocSections] > 3} {
+        append tocHtml "        <nav class=\"toc\">\n"
+        append tocHtml "            <h2>Table of Contents</h2>\n"
+        append tocHtml "            <ul>\n"
+        foreach section $tocSections {
+            lassign $section name anchor
+            append tocHtml "                <li><a href=\"#$anchor\">$name</a></li>\n"
+        }
+        append tocHtml "            </ul>\n"
+        append tocHtml "        </nav>\n"
+        append tocHtml "\n"
+    }
+
+    # Insert TOC at the placeholder
+    set content [string map [list "        <!-- TOC will be inserted here -->" $tocHtml] $content]
+
+    # Write final file
+    set finalFile [open "$html_dir/$self" w]
+    puts -nonewline $finalFile $content
+    close $finalFile
+
+    # Clean up temp file
+    file delete "$html_dir/$self.tmp"
 }
